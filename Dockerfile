@@ -27,6 +27,4 @@ RUN sed -i -e "s/bin\/ash/bin\/bash/" /etc/passwd
 
 USER www-data
 
-RUN composer install -o
-
 USER root
