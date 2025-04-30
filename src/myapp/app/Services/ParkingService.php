@@ -9,6 +9,7 @@ use App\Models\ParkingSpot;
 use App\Models\Vehicle;
 use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class ParkingService
 {
@@ -53,29 +54,32 @@ class ParkingService
 
     public function parkVehicle(VehicleType $vehicleType, string $vehiclePlate, int $spotId): void
     {
-        $vehicle = $this->createOrGetVehicle($vehiclePlate, $vehicleType);
-        $this->ensureVehicleNotAlreadyParked($vehicle);
+        DB::transaction(function () use ($vehicleType, $vehiclePlate, $spotId) {
+            $vehicle = $this->createOrGetVehicle($vehiclePlate, $vehicleType);
+            $this->ensureVehicleNotAlreadyParked($vehicle);
 
-        $spot = ParkingSpot::find($spotId);
-        if (!$spot) {
-            throw new ApiException('Parking spot not found', 404);
-        }
+            $spot = ParkingSpot::where('id', $spotId)->lockForUpdate()->first();
+            if (!$spot) {
+                throw new ApiException('Parking spot not found', Response::HTTP_NOT_FOUND);
+            }
 
-        if ($spot->isOccupied()) {
-            throw new ApiException('Parking spot is already taken');
-        }
+            if ($spot->isOccupied()) {
+                throw new ApiException('Parking spot is already taken');
+            }
 
-        if (($vehicle->isCar() || $vehicle->isVan()) && $spot->type !== ParkSpotType::REGULAR->value) {
-            throw new ApiException('This spot is not for cars/vans');
-        }
+            if (($vehicle->isCar() || $vehicle->isVan()) && $spot->type !== ParkSpotType::REGULAR->value) {
+                throw new ApiException('This spot is not for cars/vans');
+            }
 
-        if ($vehicle->isVan()) {
-            $this->parkVan($vehicle, $spot);
-            return;
-        }
+            if ($vehicle->isVan()) {
+                $this->parkVan($vehicle, $spot);
+                return;
+            }
 
-        $spot->vehicle_id = $vehicle->id;
-        $spot->save();
+            $spot->vehicle_id = $vehicle->id;
+            $spot->save();
+            sleep(30);
+        });
     }
 
     private function createOrGetVehicle(string $plate, VehicleType $type): Vehicle
@@ -108,8 +112,9 @@ class ParkingService
             ->whereIn('type', [ParkSpotType::REGULAR])
             ->whereNull('vehicle_id')
             ->where('identifier', '<>', $spot->identifier)
-            ->limit(2)
             ->orderBy('identifier')
+            ->limit(2)
+            ->lockForUpdate()
             ->get();
 
         if (count($spots) < 2) {
